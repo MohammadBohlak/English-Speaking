@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { data } from "./sentences";
 
 const SENTENCES_PER_PAGE = 30;
@@ -7,14 +7,15 @@ const TextToSpeechPage = () => {
   // مصفوفة الجمل ثنائية اللغة
   const [sentences] = useState(data);
   const [currentPage, setCurrentPage] = useState(1);
-  const [currentUtterance, setCurrentUtterance] = useState(null);
   const [currentlySpeaking, setCurrentlySpeaking] = useState(null);
   const [expandedIndex, setExpandedIndex] = useState(null);
   const [voices, setVoices] = useState([]);
   const [customText, setCustomText] = useState("");
   const [isReadingAll, setIsReadingAll] = useState(false);
   const [currentReadingIndex, setCurrentReadingIndex] = useState(0);
-  const [sentencesQueue, setSentencesQueue] = useState([]);
+
+  const readingQueue = useRef([]);
+  const isReading = useRef(false);
 
   useEffect(() => {
     const loadVoices = () => {
@@ -26,6 +27,7 @@ const TextToSpeechPage = () => {
     loadVoices();
     return () => {
       window.speechSynthesis.onvoiceschanged = null;
+      stopSpeaking();
     };
   }, []);
 
@@ -39,10 +41,8 @@ const TextToSpeechPage = () => {
     return sentences.slice(startIndex, endIndex);
   };
 
-  const speak = (text, index) => {
-    if ("speechSynthesis" in window) {
-      stopSpeaking();
-
+  const speak = (text, absoluteIndex) => {
+    if ("speechSynthesis" in window && text) {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "en-US";
       utterance.rate = 1.0;
@@ -50,40 +50,24 @@ const TextToSpeechPage = () => {
       const englishVoice = voices.find((v) => v.lang.includes("en-US"));
       if (englishVoice) utterance.voice = englishVoice;
 
+      utterance.onstart = () => {
+        setCurrentlySpeaking(absoluteIndex);
+      };
+
       utterance.onend = () => {
         setCurrentlySpeaking(null);
-        if (isReadingAll) {
-          // الانتقال للجملة التالية بعد تأخير بسيط
-          // setTimeout(() => {
-          if (currentReadingIndex < sentencesQueue.length - 1) {
-            setCurrentReadingIndex(currentReadingIndex + 1);
-            speak(
-              sentencesQueue[currentReadingIndex + 1].en,
-              currentReadingIndex + 1
-            );
-          } else {
-            setIsReadingAll(false);
-            setCurrentReadingIndex(0);
-          }
-          // }, 0); // تأخير 500 مللي ثانية بين الجمل
-        }
+        isReading.current = false;
+        processQueue();
       };
 
       utterance.onerror = () => {
         setCurrentlySpeaking(null);
-        if (isReadingAll) {
-          setIsReadingAll(false);
-          setCurrentReadingIndex(0);
-        }
+        isReading.current = false;
+        processQueue();
       };
 
-      utterance.onstart = () => {
-        const absoluteIndex = (currentPage - 1) * SENTENCES_PER_PAGE + index;
-        setCurrentlySpeaking(absoluteIndex);
-      };
-
-      setCurrentUtterance(utterance);
       window.speechSynthesis.speak(utterance);
+      isReading.current = true;
     }
   };
 
@@ -97,10 +81,9 @@ const TextToSpeechPage = () => {
 
     if (currentlySpeaking !== null) {
       stopSpeaking();
-      setIsReadingAll(false);
     }
 
-    speak(getCurrentPageSentences()[index].en, index);
+    speak(getCurrentPageSentences()[index].en, absoluteIndex);
   };
 
   const speakCustomText = () => {
@@ -119,7 +102,6 @@ const TextToSpeechPage = () => {
       utterance.onend = () => setCurrentlySpeaking(null);
       utterance.onerror = () => setCurrentlySpeaking(null);
 
-      setCurrentUtterance(utterance);
       window.speechSynthesis.speak(utterance);
     }
   };
@@ -129,7 +111,8 @@ const TextToSpeechPage = () => {
       window.speechSynthesis.cancel();
       setCurrentlySpeaking(null);
       setIsReadingAll(false);
-      setCurrentReadingIndex(0);
+      readingQueue.current = [];
+      isReading.current = false;
     }
   };
 
@@ -144,16 +127,38 @@ const TextToSpeechPage = () => {
     setExpandedIndex(null);
   };
 
-  // قراءة جميع الجمل في الصفحة الحالية
-  const readAllSentences = () => {
-    const currentSentences = getCurrentPageSentences();
-    if (currentSentences.length === 0) return;
+  const processQueue = () => {
+    if (readingQueue.current.length > 0 && !isReading.current) {
+      const nextItem = readingQueue.current.shift();
+      speak(nextItem.text, nextItem.index);
+    } else if (readingQueue.current.length === 0 && isReadingAll) {
+      setIsReadingAll(false);
+    }
+  };
 
-    stopSpeaking(); // إيقاف أي قراءة جارية
-    setIsReadingAll(true);
-    setCurrentReadingIndex(0);
-    setSentencesQueue(currentSentences);
-    speak(currentSentences[0].en, 0);
+  // قراءة جميع الجمل في الصفحة الحالية
+  const toggleReadAllSentences = () => {
+    if (isReadingAll) {
+      // إذا كانت القراءة الكلية نشطة، أوقفها
+      stopSpeaking();
+      setIsReadingAll(false);
+      readingQueue.current = [];
+    } else {
+      // ابدأ القراءة الكلية
+      const currentSentences = getCurrentPageSentences();
+      if (currentSentences.length === 0) return;
+
+      setIsReadingAll(true);
+
+      // إعداد قائمة القراءة
+      readingQueue.current = currentSentences.map((sentence, index) => ({
+        text: sentence.en,
+        index: (currentPage - 1) * SENTENCES_PER_PAGE + index,
+      }));
+
+      // بدء معالجة قائمة القراءة
+      processQueue();
+    }
   };
 
   // إنشاء أزرار الصفحات
@@ -316,33 +321,33 @@ const TextToSpeechPage = () => {
         }}
       >
         <button
-          onClick={readAllSentences}
-          disabled={isReadingAll}
+          onClick={toggleReadAllSentences}
           style={{
             padding: "10px 20px",
-            backgroundColor: isReadingAll ? "#7f8c8d" : "#3498db",
+            backgroundColor: isReadingAll ? "#e74c3c" : "#3498db",
             color: "white",
             border: "none",
             borderRadius: "4px",
-            cursor: isReadingAll ? "not-allowed" : "pointer",
+            cursor: "pointer",
             fontSize: "16px",
             fontWeight: "bold",
             display: "flex",
             alignItems: "center",
             gap: "8px",
+            transition: "background-color 0.3s",
+            boxShadow: "0 2px 5px rgba(0,0,0,0.2)",
           }}
         >
-          {isReadingAll ? "Reading All..." : "Read All Sentences"}
+          {isReadingAll ? "Stop Reading All" : "Read All Sentences"}
           {isReadingAll && (
             <div
-              className="spinner"
               style={{
                 width: "16px",
                 height: "16px",
                 border: "3px solid rgba(255,255,255,0.3)",
                 borderRadius: "50%",
                 borderTopColor: "white",
-                animation: "spin 1s ease-in-out infinite",
+                animation: "spin 1s linear infinite",
               }}
             />
           )}
@@ -363,10 +368,11 @@ const TextToSpeechPage = () => {
               overflow: "hidden",
               boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
               backgroundColor: isCurrentlySpeaking ? "#e3f2fd" : "#fff",
-              transition: "all 0.2s ease",
+              transition: "all 0.3s ease",
               border: isCurrentlySpeaking
-                ? "1px solid #64b5f6"
-                : "1px solid transparent",
+                ? "2px solid #64b5f6"
+                : "1px solid #eee",
+              transform: isCurrentlySpeaking ? "scale(1.01)" : "scale(1)",
             }}
           >
             <div
@@ -393,7 +399,8 @@ const TextToSpeechPage = () => {
                   alignItems: "center",
                   justifyContent: "center",
                   flexShrink: 0,
-                  transition: "background-color 0.2s",
+                  transition: "background-color 0.3s",
+                  boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
                 }}
                 aria-label={isCurrentlySpeaking ? "Stop" : "Play"}
               >
@@ -418,6 +425,7 @@ const TextToSpeechPage = () => {
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     fontSize: "0.95rem",
+                    lineHeight: "1.5",
                   }}
                 >
                   {absoluteIndex + 1}
@@ -432,7 +440,7 @@ const TextToSpeechPage = () => {
                     expandedIndex === absoluteIndex
                       ? "rotate(180deg)"
                       : "rotate(0deg)",
-                  transition: "transform 0.2s",
+                  transition: "transform 0.3s",
                   fontSize: "14px",
                   cursor: "pointer",
                   padding: "8px",
@@ -573,6 +581,15 @@ const TextToSpeechPage = () => {
           </button>
         </div>
       </div>
+
+      {/* إضافة أنميشن للدوران */}
+      <style>
+        {`
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+        `}
+      </style>
     </div>
   );
 };
