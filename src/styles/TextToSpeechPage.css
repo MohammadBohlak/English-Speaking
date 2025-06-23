@@ -106,6 +106,7 @@
 }
 
 .play-button {
+  user-select: none;
   padding: 8px;
   background-color: #4caf50;
   color: white;
