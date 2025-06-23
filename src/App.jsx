@@ -1,5 +1,5 @@
 import "./App.css";
-import TextToSpeechPage from "./TextToSpeechPage";
+import TextToSpeechPage from "./components/TextToSpeechPage";
 
 function App() {
   return (
